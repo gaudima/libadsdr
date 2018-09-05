@@ -1,7 +1,7 @@
 #ifndef FX3DEVERR
 #define FX3DEVERR
 
-enum fx3_dev_err_t {
+typedef enum {
     FX3_ERR_OK = 0,
     FX3_ERR_DRV_NOT_IMPLEMENTED       = -5,
     FX3_ERR_USB_INIT_FAIL             = -10,
@@ -13,7 +13,7 @@ enum fx3_dev_err_t {
     FX3_ERR_REG_WRITE_FAIL            = -32,
     FX3_ERR_FW_TOO_MANY_ERRORS        = -33,
     FX3_ERR_CTRL_TX_FAIL              = -35
-};
+} fx3_dev_err_t;
 const char* fx3_get_error_string( fx3_dev_err_t error );
 
 #endif // FX3DEVERR

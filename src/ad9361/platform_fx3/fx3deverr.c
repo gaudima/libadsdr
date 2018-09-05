@@ -16,6 +16,5 @@ const char* fx3_get_error_string(fx3_dev_err_t error) {
         case FX3_ERR_CTRL_TX_FAIL:              return "FX3_ERR_CTRL_TX_FAIL";
         default:                                return "FX3_ERR_UNKNOWN_ERROR";
     }
-
 }
 

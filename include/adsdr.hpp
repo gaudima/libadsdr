@@ -116,7 +116,9 @@ namespace ADSDR
     {
         CMD_OK = 0,
         CMD_INVALID_PARAM,
-        CMD_ENSM_ERR
+        CMD_ENSM_ERR,
+        CMD_API_ERR,
+        CMD_NOT_IMPL
     };
 
     enum gainctrl_mode

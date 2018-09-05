@@ -23,24 +23,19 @@
 
 #include <adsdr.hpp>
 #include "readerwriterqueue/readerwriterqueue.h"
-
-#include "devioifce.h"
-#include "ad9361_tuner.h"
-
 #include "libusb.h"
 
-
-enum fx3cmd {
-    REG_SPI_READ8       = 0xB5,
-    REG_SPI_WRITE8      = 0xB6,
-    DEVICE_START        = 0xBA,
-    DEVICE_STOP         = 0xBB,
-    DEVICE_RESET        = 0xB3
-};
+extern "C" {
+    #include "ad9361_api.h"
+    #include "platform.h"
+    #include "parameters.h"
+    #include "fx3deverr.h"
+    #include "fx3cmd.h"
+}
 
 namespace ADSDR
 {
-    class ADSDR_impl : public DeviceControlIOIfce
+    class ADSDR_impl
     {
     public:
         ADSDR_impl(std::string serial_number = "");
@@ -75,19 +70,8 @@ namespace ADSDR
         adsdr_version version();
 
     protected:
-        // DeviceControlIOIfce interface
-        virtual uint8_t peek8( uint32_t register_address24);
-        virtual void poke8( uint32_t register_address24, uint8_t value );
-
-
-        int send24bitSPI(uint16_t addr, uint8_t data);
-        int read24bitSPI(uint16_t addr, uint8_t* data);
-
         int txControlToDevice(uint8_t* src, uint32_t size8, uint8_t cmd, uint16_t wValue, uint16_t wIndex);
         int txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd, uint16_t wValue, uint16_t wIndex);
-
-        int ctrlToDevice(uint8_t cmd, uint16_t value, uint16_t index, void* data, size_t data_len);
-        int ctrlFromDevice(uint8_t cmd, uint16_t value, uint16_t index, void* dest, size_t data_len);
 
 
         int deviceStart();
@@ -152,6 +136,8 @@ namespace ADSDR
     private:
         void run_rx_tx();
 
+        void print_ensm_state(struct ad9361_rf_phy *phy);
+
         libusb_transfer *create_rx_transfer(libusb_transfer_cb_fn callback);
         libusb_transfer *create_tx_transfer(libusb_transfer_cb_fn callback);
 
@@ -182,10 +168,10 @@ namespace ADSDR
         static moodycamel::ReaderWriterQueue<sample> _rx_buf;
         static moodycamel::ReaderWriterQueue<sample> _tx_buf;
 
-        std::shared_ptr<ad9361_device_t> m_adsdr;
-        ad9361_params m_adsdr_params;
-        double m_rx_freq;
-        double m_clock_rate;
+        AD9361_InitParam ad_default_param;
+        AD9361_RXFIRConfig rx_fir_config;
+        AD9361_TXFIRConfig tx_fir_config;
+        ad9361_rf_phy *phy;
 
         std::vector<cmd_function> m_cmd_list;
     };

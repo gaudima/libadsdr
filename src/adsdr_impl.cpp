@@ -17,20 +17,17 @@
  * along with libfreesrp.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "adsdr_impl.h"
 #include <adsdr.hpp>
-
 #include <cstring>
+
 #include <fstream>
 #include <iostream>
-
-#include "fx3deverr.h"
+#include "adsdr_impl.h"
 
 
 #define ADSDR_SERIAL_DSCR_INDEX 3
 #define MAX_SERIAL_LENGTH 256
 
-#define DEV_UPLOAD_TIMEOUT_MS 1000 // Timeout for uploading one block of firmware
 
 using namespace ADSDR;
 
@@ -41,9 +38,295 @@ std::function<void(const std::vector<sample> &)> ADSDR_impl::_rx_custom_callback
 std::vector<sample> ADSDR_impl::_tx_encoder_buf(ADSDR_RX_TX_BUF_SIZE / ADSDR_BYTES_PER_SAMPLE);
 std::function<void(std::vector<sample> &)> ADSDR_impl::_tx_custom_callback;
 
-ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::DEFAULT_RX_FREQ),
-                                                    m_clock_rate(DEFAULT_CLOCK_RATE)
+ADSDR_impl::ADSDR_impl(std::string serial_number)
 {
+    ad_default_param = {
+        /* Device selection */
+        ID_AD9361,	// dev_sel
+        /* Identification number */
+        0,		//id_no
+        /* Reference Clock */
+        40000000UL,	//reference_clk_rate
+        /* Base Configuration */
+        1,		//two_rx_two_tx_mode_enable *** adi,2rx-2tx-mode-enable
+        1,		//one_rx_one_tx_mode_use_rx_num *** adi,1rx-1tx-mode-use-rx-num
+        1,		//one_rx_one_tx_mode_use_tx_num *** adi,1rx-1tx-mode-use-tx-num
+        1,		//frequency_division_duplex_mode_enable *** adi,frequency-division-duplex-mode-enable
+        0,		//frequency_division_duplex_independent_mode_enable *** adi,frequency-division-duplex-independent-mode-enable
+        0,		//tdd_use_dual_synth_mode_enable *** adi,tdd-use-dual-synth-mode-enable
+        0,		//tdd_skip_vco_cal_enable *** adi,tdd-skip-vco-cal-enable
+        0,		//tx_fastlock_delay_ns *** adi,tx-fastlock-delay-ns
+        0,		//rx_fastlock_delay_ns *** adi,rx-fastlock-delay-ns
+        0,		//rx_fastlock_pincontrol_enable *** adi,rx-fastlock-pincontrol-enable
+        0,		//tx_fastlock_pincontrol_enable *** adi,tx-fastlock-pincontrol-enable
+        0,		//external_rx_lo_enable *** adi,external-rx-lo-enable
+        0,		//external_tx_lo_enable *** adi,external-tx-lo-enable
+        5,		//dc_offset_tracking_update_event_mask *** adi,dc-offset-tracking-update-event-mask
+        6,		//dc_offset_attenuation_high_range *** adi,dc-offset-attenuation-high-range
+        5,		//dc_offset_attenuation_low_range *** adi,dc-offset-attenuation-low-range
+        0x28,	//dc_offset_count_high_range *** adi,dc-offset-count-high-range
+        0x32,	//dc_offset_count_low_range *** adi,dc-offset-count-low-range
+        0,		//split_gain_table_mode_enable *** adi,split-gain-table-mode-enable
+        MAX_SYNTH_FREF,	//trx_synthesizer_target_fref_overwrite_hz *** adi,trx-synthesizer-target-fref-overwrite-hz
+        0,		// qec_tracking_slow_mode_enable *** adi,qec-tracking-slow-mode-enable
+        /* ENSM Control */
+        0,		//ensm_enable_pin_pulse_mode_enable *** adi,ensm-enable-pin-pulse-mode-enable
+        0,		//ensm_enable_txnrx_control_enable *** adi,ensm-enable-txnrx-control-enable
+        /* LO Control */
+        2400000000UL,	//rx_synthesizer_frequency_hz *** adi,rx-synthesizer-frequency-hz
+        2400000000UL,	//tx_synthesizer_frequency_hz *** adi,tx-synthesizer-frequency-hz
+        1,				//tx_lo_powerdown_managed_enable *** adi,tx-lo-powerdown-managed-enable
+        /* Rate & BW Control */
+        {983040000, 245760000, 122880000, 61440000, 30720000, 30720000},// rx_path_clock_frequencies[6] *** adi,rx-path-clock-frequencies
+        {983040000, 122880000, 122880000, 61440000, 30720000, 30720000},// tx_path_clock_frequencies[6] *** adi,tx-path-clock-frequencies
+        18000000,//rf_rx_bandwidth_hz *** adi,rf-rx-bandwidth-hz
+        18000000,//rf_tx_bandwidth_hz *** adi,rf-tx-bandwidth-hz
+        /* RF Port Control */
+        0,		//rx_rf_port_input_select *** adi,rx-rf-port-input-select
+        0,		//tx_rf_port_input_select *** adi,tx-rf-port-input-select
+        /* TX Attenuation Control */
+        10000,	//tx_attenuation_mdB *** adi,tx-attenuation-mdB
+        0,		//update_tx_gain_in_alert_enable *** adi,update-tx-gain-in-alert-enable
+        /* Reference Clock Control */
+        0,		//xo_disable_use_ext_refclk_enable *** adi,xo-disable-use-ext-refclk-enable
+        {8, 5920},	//dcxo_coarse_and_fine_tune[2] *** adi,dcxo-coarse-and-fine-tune
+        CLKOUT_DISABLE,	//clk_output_mode_select *** adi,clk-output-mode-select
+        /* Gain Control */
+        2,		//gc_rx1_mode *** adi,gc-rx1-mode
+        2,		//gc_rx2_mode *** adi,gc-rx2-mode
+        58,		//gc_adc_large_overload_thresh *** adi,gc-adc-large-overload-thresh
+        4,		//gc_adc_ovr_sample_size *** adi,gc-adc-ovr-sample-size
+        47,		//gc_adc_small_overload_thresh *** adi,gc-adc-small-overload-thresh
+        8192,	//gc_dec_pow_measurement_duration *** adi,gc-dec-pow-measurement-duration
+        0,		//gc_dig_gain_enable *** adi,gc-dig-gain-enable
+        800,	//gc_lmt_overload_high_thresh *** adi,gc-lmt-overload-high-thresh
+        704,	//gc_lmt_overload_low_thresh *** adi,gc-lmt-overload-low-thresh
+        24,		//gc_low_power_thresh *** adi,gc-low-power-thresh
+        15,		//gc_max_dig_gain *** adi,gc-max-dig-gain
+        /* Gain MGC Control */
+        2,		//mgc_dec_gain_step *** adi,mgc-dec-gain-step
+        2,		//mgc_inc_gain_step *** adi,mgc-inc-gain-step
+        0,		//mgc_rx1_ctrl_inp_enable *** adi,mgc-rx1-ctrl-inp-enable
+        0,		//mgc_rx2_ctrl_inp_enable *** adi,mgc-rx2-ctrl-inp-enable
+        0,		//mgc_split_table_ctrl_inp_gain_mode *** adi,mgc-split-table-ctrl-inp-gain-mode
+        /* Gain AGC Control */
+        10,		//agc_adc_large_overload_exceed_counter *** adi,agc-adc-large-overload-exceed-counter
+        2,		//agc_adc_large_overload_inc_steps *** adi,agc-adc-large-overload-inc-steps
+        0,		//agc_adc_lmt_small_overload_prevent_gain_inc_enable *** adi,agc-adc-lmt-small-overload-prevent-gain-inc-enable
+        10,		//agc_adc_small_overload_exceed_counter *** adi,agc-adc-small-overload-exceed-counter
+        4,		//agc_dig_gain_step_size *** adi,agc-dig-gain-step-size
+        3,		//agc_dig_saturation_exceed_counter *** adi,agc-dig-saturation-exceed-counter
+        1000,	// agc_gain_update_interval_us *** adi,agc-gain-update-interval-us
+        0,		//agc_immed_gain_change_if_large_adc_overload_enable *** adi,agc-immed-gain-change-if-large-adc-overload-enable
+        0,		//agc_immed_gain_change_if_large_lmt_overload_enable *** adi,agc-immed-gain-change-if-large-lmt-overload-enable
+        10,		//agc_inner_thresh_high *** adi,agc-inner-thresh-high
+        1,		//agc_inner_thresh_high_dec_steps *** adi,agc-inner-thresh-high-dec-steps
+        12,		//agc_inner_thresh_low *** adi,agc-inner-thresh-low
+        1,		//agc_inner_thresh_low_inc_steps *** adi,agc-inner-thresh-low-inc-steps
+        10,		//agc_lmt_overload_large_exceed_counter *** adi,agc-lmt-overload-large-exceed-counter
+        2,		//agc_lmt_overload_large_inc_steps *** adi,agc-lmt-overload-large-inc-steps
+        10,		//agc_lmt_overload_small_exceed_counter *** adi,agc-lmt-overload-small-exceed-counter
+        5,		//agc_outer_thresh_high *** adi,agc-outer-thresh-high
+        2,		//agc_outer_thresh_high_dec_steps *** adi,agc-outer-thresh-high-dec-steps
+        18,		//agc_outer_thresh_low *** adi,agc-outer-thresh-low
+        2,		//agc_outer_thresh_low_inc_steps *** adi,agc-outer-thresh-low-inc-steps
+        1,		//agc_attack_delay_extra_margin_us; *** adi,agc-attack-delay-extra-margin-us
+        0,		//agc_sync_for_gain_counter_enable *** adi,agc-sync-for-gain-counter-enable
+        /* Fast AGC */
+        64,		//fagc_dec_pow_measuremnt_duration ***  adi,fagc-dec-pow-measurement-duration
+        260,	//fagc_state_wait_time_ns ***  adi,fagc-state-wait-time-ns
+        /* Fast AGC - Low Power */
+        0,		//fagc_allow_agc_gain_increase ***  adi,fagc-allow-agc-gain-increase-enable
+        5,		//fagc_lp_thresh_increment_time ***  adi,fagc-lp-thresh-increment-time
+        1,		//fagc_lp_thresh_increment_steps ***  adi,fagc-lp-thresh-increment-steps
+        /* Fast AGC - Lock Level (Lock Level is set via slow AGC inner high threshold) */
+        1,		//fagc_lock_level_lmt_gain_increase_en ***  adi,fagc-lock-level-lmt-gain-increase-enable
+        5,		//fagc_lock_level_gain_increase_upper_limit ***  adi,fagc-lock-level-gain-increase-upper-limit
+        /* Fast AGC - Peak Detectors and Final Settling */
+        1,		//fagc_lpf_final_settling_steps ***  adi,fagc-lpf-final-settling-steps
+        1,		//fagc_lmt_final_settling_steps ***  adi,fagc-lmt-final-settling-steps
+        3,		//fagc_final_overrange_count ***  adi,fagc-final-overrange-count
+        /* Fast AGC - Final Power Test */
+        0,		//fagc_gain_increase_after_gain_lock_en ***  adi,fagc-gain-increase-after-gain-lock-enable
+        /* Fast AGC - Unlocking the Gain */
+        0,		//fagc_gain_index_type_after_exit_rx_mode ***  adi,fagc-gain-index-type-after-exit-rx-mode
+        1,		//fagc_use_last_lock_level_for_set_gain_en ***  adi,fagc-use-last-lock-level-for-set-gain-enable
+        1,		//fagc_rst_gla_stronger_sig_thresh_exceeded_en ***  adi,fagc-rst-gla-stronger-sig-thresh-exceeded-enable
+        5,		//fagc_optimized_gain_offset ***  adi,fagc-optimized-gain-offset
+        10,		//fagc_rst_gla_stronger_sig_thresh_above_ll ***  adi,fagc-rst-gla-stronger-sig-thresh-above-ll
+        1,		//fagc_rst_gla_engergy_lost_sig_thresh_exceeded_en ***  adi,fagc-rst-gla-engergy-lost-sig-thresh-exceeded-enable
+        1,		//fagc_rst_gla_engergy_lost_goto_optim_gain_en ***  adi,fagc-rst-gla-engergy-lost-goto-optim-gain-enable
+        10,		//fagc_rst_gla_engergy_lost_sig_thresh_below_ll ***  adi,fagc-rst-gla-engergy-lost-sig-thresh-below-ll
+        8,		//fagc_energy_lost_stronger_sig_gain_lock_exit_cnt ***  adi,fagc-energy-lost-stronger-sig-gain-lock-exit-cnt
+        1,		//fagc_rst_gla_large_adc_overload_en ***  adi,fagc-rst-gla-large-adc-overload-enable
+        1,		//fagc_rst_gla_large_lmt_overload_en ***  adi,fagc-rst-gla-large-lmt-overload-enable
+        0,		//fagc_rst_gla_en_agc_pulled_high_en ***  adi,fagc-rst-gla-en-agc-pulled-high-enable
+        0,		//fagc_rst_gla_if_en_agc_pulled_high_mode ***  adi,fagc-rst-gla-if-en-agc-pulled-high-mode
+        64,		//fagc_power_measurement_duration_in_state5 ***  adi,fagc-power-measurement-duration-in-state5
+        /* RSSI Control */
+        1,		//rssi_delay *** adi,rssi-delay
+        1000,	//rssi_duration *** adi,rssi-duration
+        3,		//rssi_restart_mode *** adi,rssi-restart-mode
+        0,		//rssi_unit_is_rx_samples_enable *** adi,rssi-unit-is-rx-samples-enable
+        1,		//rssi_wait *** adi,rssi-wait
+        /* Aux ADC Control */
+        256,	//aux_adc_decimation *** adi,aux-adc-decimation
+        40000000UL,	//aux_adc_rate *** adi,aux-adc-rate
+        /* AuxDAC Control */
+        1,		//aux_dac_manual_mode_enable ***  adi,aux-dac-manual-mode-enable
+        0,		//aux_dac1_default_value_mV ***  adi,aux-dac1-default-value-mV
+        0,		//aux_dac1_active_in_rx_enable ***  adi,aux-dac1-active-in-rx-enable
+        0,		//aux_dac1_active_in_tx_enable ***  adi,aux-dac1-active-in-tx-enable
+        0,		//aux_dac1_active_in_alert_enable ***  adi,aux-dac1-active-in-alert-enable
+        0,		//aux_dac1_rx_delay_us ***  adi,aux-dac1-rx-delay-us
+        0,		//aux_dac1_tx_delay_us ***  adi,aux-dac1-tx-delay-us
+        0,		//aux_dac2_default_value_mV ***  adi,aux-dac2-default-value-mV
+        0,		//aux_dac2_active_in_rx_enable ***  adi,aux-dac2-active-in-rx-enable
+        0,		//aux_dac2_active_in_tx_enable ***  adi,aux-dac2-active-in-tx-enable
+        0,		//aux_dac2_active_in_alert_enable ***  adi,aux-dac2-active-in-alert-enable
+        0,		//aux_dac2_rx_delay_us ***  adi,aux-dac2-rx-delay-us
+        0,		//aux_dac2_tx_delay_us ***  adi,aux-dac2-tx-delay-us
+        /* Temperature Sensor Control */
+        256,	//temp_sense_decimation *** adi,temp-sense-decimation
+        1000,	//temp_sense_measurement_interval_ms *** adi,temp-sense-measurement-interval-ms
+        (int8_t)0xCE,	//temp_sense_offset_signed *** adi,temp-sense-offset-signed
+        1,		//temp_sense_periodic_measurement_enable *** adi,temp-sense-periodic-measurement-enable
+        /* Control Out Setup */
+        0xFF,	//ctrl_outs_enable_mask *** adi,ctrl-outs-enable-mask
+        0,		//ctrl_outs_index *** adi,ctrl-outs-index
+        /* External LNA Control */
+        0,		//elna_settling_delay_ns *** adi,elna-settling-delay-ns
+        0,		//elna_gain_mdB *** adi,elna-gain-mdB
+        0,		//elna_bypass_loss_mdB *** adi,elna-bypass-loss-mdB
+        0,		//elna_rx1_gpo0_control_enable *** adi,elna-rx1-gpo0-control-enable
+        0,		//elna_rx2_gpo1_control_enable *** adi,elna-rx2-gpo1-control-enable
+        0,		//elna_gaintable_all_index_enable *** adi,elna-gaintable-all-index-enable
+        /* Digital Interface Control */
+        0,		//digital_interface_tune_skip_mode *** adi,digital-interface-tune-skip-mode
+        0,		//digital_interface_tune_fir_disable *** adi,digital-interface-tune-fir-disable
+        1,		//pp_tx_swap_enable *** adi,pp-tx-swap-enable
+        1,		//pp_rx_swap_enable *** adi,pp-rx-swap-enable
+        0,		//tx_channel_swap_enable *** adi,tx-channel-swap-enable
+        0,		//rx_channel_swap_enable *** adi,rx-channel-swap-enable
+        1,		//rx_frame_pulse_mode_enable *** adi,rx-frame-pulse-mode-enable
+        0,		//two_t_two_r_timing_enable *** adi,2t2r-timing-enable
+        0,		//invert_data_bus_enable *** adi,invert-data-bus-enable
+        0,		//invert_data_clk_enable *** adi,invert-data-clk-enable
+        0,		//fdd_alt_word_order_enable *** adi,fdd-alt-word-order-enable
+        0,		//invert_rx_frame_enable *** adi,invert-rx-frame-enable
+        0,		//fdd_rx_rate_2tx_enable *** adi,fdd-rx-rate-2tx-enable
+        0,		//swap_ports_enable *** adi,swap-ports-enable
+        1,		//single_data_rate_enable *** adi,single-data-rate-enable
+        0,		//lvds_mode_enable *** adi,lvds-mode-enable
+        0,		//half_duplex_mode_enable *** adi,half-duplex-mode-enable
+        0,		//single_port_mode_enable *** adi,single-port-mode-enable
+        1,		//full_port_enable *** adi,full-port-enable
+        0,		//full_duplex_swap_bits_enable *** adi,full-duplex-swap-bits-enable
+        0,		//delay_rx_data *** adi,delay-rx-data
+        0,		//rx_data_clock_delay *** adi,rx-data-clock-delay
+        4,		//rx_data_delay *** adi,rx-data-delay
+        7,		//tx_fb_clock_delay *** adi,tx-fb-clock-delay
+        0,		//tx_data_delay *** adi,tx-data-delay
+        150,	//lvds_bias_mV *** adi,lvds-bias-mV
+        1,		//lvds_rx_onchip_termination_enable *** adi,lvds-rx-onchip-termination-enable
+        0,		//rx1rx2_phase_inversion_en *** adi,rx1-rx2-phase-inversion-enable
+        0xFF,	//lvds_invert1_control *** adi,lvds-invert1-control
+        0x0F,	//lvds_invert2_control *** adi,lvds-invert2-control
+        /* GPO Control */
+        0,		//gpo0_inactive_state_high_enable *** adi,gpo0-inactive-state-high-enable
+        0,		//gpo1_inactive_state_high_enable *** adi,gpo1-inactive-state-high-enable
+        0,		//gpo2_inactive_state_high_enable *** adi,gpo2-inactive-state-high-enable
+        0,		//gpo3_inactive_state_high_enable *** adi,gpo3-inactive-state-high-enable
+        0,		//gpo0_slave_rx_enable *** adi,gpo0-slave-rx-enable
+        0,		//gpo0_slave_tx_enable *** adi,gpo0-slave-tx-enable
+        0,		//gpo1_slave_rx_enable *** adi,gpo1-slave-rx-enable
+        0,		//gpo1_slave_tx_enable *** adi,gpo1-slave-tx-enable
+        0,		//gpo2_slave_rx_enable *** adi,gpo2-slave-rx-enable
+        0,		//gpo2_slave_tx_enable *** adi,gpo2-slave-tx-enable
+        0,		//gpo3_slave_rx_enable *** adi,gpo3-slave-rx-enable
+        0,		//gpo3_slave_tx_enable *** adi,gpo3-slave-tx-enable
+        0,		//gpo0_rx_delay_us *** adi,gpo0-rx-delay-us
+        0,		//gpo0_tx_delay_us *** adi,gpo0-tx-delay-us
+        0,		//gpo1_rx_delay_us *** adi,gpo1-rx-delay-us
+        0,		//gpo1_tx_delay_us *** adi,gpo1-tx-delay-us
+        0,		//gpo2_rx_delay_us *** adi,gpo2-rx-delay-us
+        0,		//gpo2_tx_delay_us *** adi,gpo2-tx-delay-us
+        0,		//gpo3_rx_delay_us *** adi,gpo3-rx-delay-us
+        0,		//gpo3_tx_delay_us *** adi,gpo3-tx-delay-us
+        /* Tx Monitor Control */
+        37000,	//low_high_gain_threshold_mdB *** adi,txmon-low-high-thresh
+        0,		//low_gain_dB *** adi,txmon-low-gain
+        24,		//high_gain_dB *** adi,txmon-high-gain
+        0,		//tx_mon_track_en *** adi,txmon-dc-tracking-enable
+        0,		//one_shot_mode_en *** adi,txmon-one-shot-mode-enable
+        511,	//tx_mon_delay *** adi,txmon-delay
+        8192,	//tx_mon_duration *** adi,txmon-duration
+        2,		//tx1_mon_front_end_gain *** adi,txmon-1-front-end-gain
+        2,		//tx2_mon_front_end_gain *** adi,txmon-2-front-end-gain
+        48,		//tx1_mon_lo_cm *** adi,txmon-1-lo-cm
+        48,		//tx2_mon_lo_cm *** adi,txmon-2-lo-cm
+        /* GPIO definitions */
+        GPIO_RESET_PIN,		//gpio_resetb *** reset-gpios
+        /* MCS Sync */
+        -1,		//gpio_sync *** sync-gpios
+        -1,		//gpio_cal_sw1 *** cal-sw1-gpios
+        -1,		//gpio_cal_sw2 *** cal-sw2-gpios
+        /* External LO clocks */
+        NULL,	//(*ad9361_rfpll_ext_recalc_rate)()
+        NULL,	//(*ad9361_rfpll_ext_round_rate)()
+        NULL	//(*ad9361_rfpll_ext_set_rate)()
+    };
+
+    rx_fir_config = {	// BPF PASSBAND 3/20 fs to 1/4 fs
+        3, // rx
+        0, // rx_gain
+        1, // rx_dec
+        {-4, -6, -37, 35, 186, 86, -284, -315,
+         107, 219, -4, 271, 558, -307, -1182, -356,
+         658, 157, 207, 1648, 790, -2525, -2553, 748,
+         865, -476, 3737, 6560, -3583, -14731, -5278, 14819,
+         14819, -5278, -14731, -3583, 6560, 3737, -476, 865,
+         748, -2553, -2525, 790, 1648, 207, 157, 658,
+         -356, -1182, -307, 558, 271, -4, 219, 107,
+         -315, -284, 86, 186, 35, -37, -6, -4,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0}, // rx_coef[128]
+        64, // rx_coef_size
+        {0, 0, 0, 0, 0, 0}, //rx_path_clks[6]
+        0 // rx_bandwidth
+    };
+
+    tx_fir_config = {	// BPF PASSBAND 3/20 fs to 1/4 fs
+        3, // tx
+        -6, // tx_gain
+        1, // tx_int
+        {-4, -6, -37, 35, 186, 86, -284, -315,
+         107, 219, -4, 271, 558, -307, -1182, -356,
+         658, 157, 207, 1648, 790, -2525, -2553, 748,
+         865, -476, 3737, 6560, -3583, -14731, -5278, 14819,
+         14819, -5278, -14731, -3583, 6560, 3737, -476, 865,
+         748, -2553, -2525, 790, 1648, 207, 157, 658,
+         -356, -1182, -307, 558, 271, -4, 219, 107,
+         -315, -284, 86, 186, 35, -37, -6, -4,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0, 0, 0, 0}, // tx_coef[128]
+        64, // tx_coef_size
+        {0, 0, 0, 0, 0, 0}, // tx_path_clks[6]
+        0 // tx_bandwidth
+    };
+
     //----------------------------------------------------
     m_cmd_list.push_back(&ADSDR_impl::get_tx_lo_freq);
     m_cmd_list.push_back(&ADSDR_impl::set_tx_lo_freq);
@@ -71,13 +354,14 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
     m_cmd_list.push_back(&ADSDR_impl::get_version);
     m_cmd_list.push_back(&ADSDR_impl::set_loopback_en);
     // ---------------------------------------------------
+
     libusb_device **devs;
 
     int ret = libusb_init(&_ctx);
 
     if(ret < 0)
     {
-        throw ConnectionError("libusb init error: error " + std::to_string(ret));
+        throw ConnectionError("libusb init error %d: error " + std::to_string(ret));
     }
 
     // Set verbosity level
@@ -99,7 +383,7 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
         int ret = libusb_get_device_descriptor(devs[i], &desc);
         if(ret < 0)
         {
-            throw ConnectionError("libusb error getting device descriptor: error " + std::to_string(ret));
+            throw ConnectionError("libusb error getting device descriptor %d: error " + std::to_string(ret));
         }
 
         if(desc.idVendor == ADSDR_VENDOR_ID && desc.idProduct == ADSDR_PRODUCT_ID)
@@ -107,7 +391,7 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
             int ret = libusb_open(devs[i], &_adsdr_handle);
             if(ret != 0)
             {
-                throw ConnectionError("libusb could not open found ADSDR USB device: error " + std::to_string(ret));
+                throw ConnectionError("libusb could not open found ADSDR USB device %d: error " + std::to_string(ret));
             }
 
 
@@ -120,7 +404,7 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
                 {
                     libusb_close(_adsdr_handle);
                     _adsdr_handle = nullptr;
-                    throw ConnectionError("1)libusb could not read ADSDR serial number: error " + std::to_string(ret) + "___" + std::to_string(desc.iSerialNumber));
+                    throw ConnectionError("1)libusb could not read ADSDR serial number %d: error " + std::to_string(ret) + "___" + std::to_string(desc.iSerialNumber));
                 }
                 else
                 {
@@ -171,7 +455,7 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
     ret = libusb_control_transfer(_adsdr_handle, LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_IN, ADSDR_GET_VERSION_REQ, 0, 0, data.data(), (uint16_t) data.size(), ADSDR_USB_TIMEOUT);
     if(ret < 0)
     {
-        throw ConnectionError("1) ADSDR not responding: error " + std::to_string(ret));
+        throw ConnectionError("1) ADSDR not responding %d: error " + std::to_string(ret));
     }
     int transferred = ret;
     _fx3_fw_version = std::string(std::begin(data), std::begin(data) + transferred);
@@ -195,6 +479,8 @@ ADSDR_impl::ADSDR_impl(std::string serial_number) : m_rx_freq(ad9361_device_t::D
     _rx_tx_worker.reset(new std::thread([this]() {
         run_rx_tx();
     }));
+
+    set_libusb_params(_ctx, _adsdr_handle);
 }
 
 ADSDR_impl::~ADSDR_impl()
@@ -239,9 +525,13 @@ ADSDR_impl::~ADSDR_impl()
 
 bool ADSDR_impl::init_sdr()
 {
-    m_adsdr = std::make_shared<ad9361_device_t>(this, &m_adsdr_params);
-    m_adsdr->initialize();
-
+    ad9361_init(&phy, &ad_default_param);
+    ad9361_set_rx_fir_config(phy, rx_fir_config);
+    ad9361_set_tx_fir_config(phy, tx_fir_config);
+    ad9361_set_no_ch_mode(phy, 1);
+    print_ensm_state(phy);
+//    ad9361_set_en_state_machine_mode(phy, ENSM_MODE_WAIT);
+//    print_ensm_state(phy);
     return true;
 }
 
@@ -255,7 +545,7 @@ std::vector<std::string> ADSDR_impl::list_connected()
     int ret = libusb_init(&list_ctx);
     if(ret < 0)
     {
-        throw ConnectionError("libusb init error: error " + std::to_string(ret));
+        throw ConnectionError("libusb init error %d: error " + std::to_string(ret));
     }
 
     // Set verbosity level
@@ -275,7 +565,7 @@ std::vector<std::string> ADSDR_impl::list_connected()
         int ret = libusb_get_device_descriptor(devs[i], &desc);
         if(ret < 0)
         {
-            throw ConnectionError("libusb error getting device descriptor: error " + std::to_string(ret));
+            throw ConnectionError("libusb error getting device descriptor %d: error " + std::to_string(ret));
         }
 
         if(desc.idVendor == ADSDR_VENDOR_ID && desc.idProduct == ADSDR_PRODUCT_ID)
@@ -284,7 +574,7 @@ std::vector<std::string> ADSDR_impl::list_connected()
             int ret = libusb_open(devs[i], &temp_handle);
             if(ret != 0)
             {
-                throw ConnectionError("libusb could not open found ADSDR USB device: error " + std::to_string(ret));
+                throw ConnectionError("libusb could not open found ADSDR USB device %d: error " + std::to_string(ret));
             }
 
         // Check if correct serial number
@@ -294,7 +584,7 @@ std::vector<std::string> ADSDR_impl::list_connected()
             ret = libusb_get_string_descriptor_ascii(temp_handle, /*ADSDR_SERIAL_DSCR_INDEX*/desc.iSerialNumber, (unsigned char *) serial_num_buf, MAX_SERIAL_LENGTH);
             if(ret < 0)
             {
-                throw ConnectionError("2) libusb could not read ADSDR serial number: error " + std::to_string(ret));
+                throw ConnectionError("2) libusb could not read ADSDR serial number %d: error " + std::to_string(ret));
             }
             else
             {
@@ -319,7 +609,7 @@ bool ADSDR_impl::fpga_loaded()
     int ret = libusb_control_transfer(_adsdr_handle, LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_RECIPIENT_DEVICE | LIBUSB_ENDPOINT_IN, ADSDR_FPGA_CONFIG_STATUS, 0, 1, stat_buf.data(), (uint16_t) stat_buf.size(), ADSDR_USB_TIMEOUT);
     if(ret < 0)
     {
-        throw ConnectionError("2) ADSDR not responding: error " + std::to_string(ret));
+        throw ConnectionError("2) ADSDR not responding %d: error " + std::to_string(ret));
     }
     //int transferred = ret;
     bool fpga_load_success = (bool) stat_buf[0];
@@ -708,11 +998,11 @@ response ADSDR_impl::send_cmd(command cmd)
 {    
     response reply;
 
+    std::cout << " Send cmd: " << cmd.cmd << " param: " << cmd.param << std::endl;
     if(cmd.cmd < COMMAND_SIZE)
     {
         reply = ad9364_cmd(cmd.cmd, cmd.param);
     }
-    std::cout << " Send cmd: " << cmd.cmd << " param: " << cmd.param << std::endl;
 
     return reply;
 }
@@ -736,65 +1026,20 @@ adsdr_version ADSDR_impl::version()
 
 int ADSDR_impl::deviceStart()
 {
-    uint8_t buf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    buf[2] = 0xFF;
-    return ctrlToDevice(DEVICE_START, 0, 1, buf, 16);
+    uint8_t buf[1] = {0};
+    return txControlToDevice(buf, 1, DEVICE_START, 0, 0);
 }
 
 int ADSDR_impl::deviceStop()
 {
-    uint8_t buf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    buf[2] = 0xFF;
-    return ctrlToDevice(DEVICE_STOP, 0, 1, buf, 16);
+    uint8_t buf[1] = {0};
+    return txControlToDevice(buf, 1, DEVICE_STOP, 0, 0);
 }
 
 int ADSDR_impl::deviceReset()
 {
-    uint8_t buf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    buf[2] = 0xFF;
-    return ctrlToDevice(DEVICE_RESET, 0, 1, buf, 16);
-}
-
-
-uint8_t ADSDR_impl::peek8( uint32_t register_address24)
-{
-    uint8_t val = 0;
-    if(read24bitSPI(register_address24, &val) == FX3_ERR_OK) {
-        return val;
-    } else {
-        return 0xFF;
-    }
-}
-
-void ADSDR_impl::poke8( uint32_t register_address24, uint8_t value )
-{
-    send24bitSPI(register_address24, value);
-}
-
-
-int ADSDR_impl::send24bitSPI(uint16_t addr, uint8_t data)
-{
-    uint8_t buf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    addr |= 0x8000;
-    buf[0] = data;
-    buf[1] = addr & 0x0ff;
-    buf[2] = addr >> 8;
-
-    return ctrlToDevice(REG_SPI_WRITE8, 0, 1, buf, 16);
-}
-
-int ADSDR_impl::read24bitSPI(uint16_t addr, uint8_t* data)
-{
-    uint8_t buf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    buf[0] = *data;
-    buf[1] = addr & 0x0ff;
-    buf[2] = addr >> 8;
-
-    size_t len = 16;
-    int success = ctrlFromDevice(REG_SPI_READ8, *data, addr, buf, len);
-
-    *data = buf[0];
-    return success;
+    uint8_t buf[3] = {0, 0, 0xFF};
+    return txControlToDevice(buf, 3, DEVICE_RESET, 0, 0);
 }
 
 int ADSDR_impl::txControlToDevice(uint8_t* src, uint32_t size8, uint8_t cmd, uint16_t wValue, uint16_t wIndex)
@@ -853,34 +1098,6 @@ int ADSDR_impl::txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd,
     return FX3_ERR_NO_DEVICE_FOUND;
 }
 
-
-int ADSDR_impl::ctrlToDevice(uint8_t cmd, uint16_t value, uint16_t index, void* data, size_t data_len)
-{
-    uint8_t  dummybuf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    uint32_t len = 16;
-    uint8_t* buf = dummybuf;
-
-    if ( data && data_len != 0 ) {
-        buf = (uint8_t*)data;
-        len = data_len;
-    }
-
-    return txControlToDevice( buf, len, cmd, value, index );
-}
-
-int ADSDR_impl::ctrlFromDevice(uint8_t cmd, uint16_t value, uint16_t index, void* dest, size_t data_len)
-{
-    uint8_t  dummybuf[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-    uint32_t len = 16;
-    uint8_t* buf = dummybuf;
-
-    if ( dest && data_len != 0 ) {
-        buf = (uint8_t*)dest;
-        len = data_len;
-    }
-    return txControlFromDevice( buf, len, cmd, value, index );
-}
-
 //=====================================  Commands  ======================================================
 
 response ADSDR_impl::ad9364_cmd(int cmd, uint64_t param)
@@ -899,34 +1116,58 @@ response ADSDR_impl::ad9364_cmd(int cmd, uint64_t param)
     return reply;
 }
 
-// ************************************************************************
-// * @brief Gets current TX LO frequency [Hz].
-// *
-// * @return None.
-// ************************************************************************
+/**************************************************************************//***
+ * @brief Gets current TX LO frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_tx_lo_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_lo_freq?" command
 {
-    uint64_t lo_freq_hz = 0;
+    uint64_t lo_freq_hz;
+
+    ad9361_get_tx_lo_freq(phy, &lo_freq_hz);
 
     *error = CMD_OK;
     memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-    printf("tx_lo_freq=%lu Hz\n\r", lo_freq_hz);
+
+    printf("tx_lo_freq=%llu Hz\n\r", lo_freq_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the TX LO frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the TX LO frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_tx_lo_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_lo_freq=" command
 {
-    uint64_t lo_freq_hz = 0;
-    //uint32_t port = TXA;
+    uint64_t lo_freq_hz;
+    uint32_t port = TXA;
 
     if(param_no >= 1)
     {
         memcpy(&lo_freq_hz, param, sizeof(lo_freq_hz));
-        printf("tx_lo_freq=%lu Hz\n\r", (unsigned long)lo_freq_hz);
+
+        // Select appropriate signal port/path
+        if(lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
+        {
+            port = TXA;
+            printf("INFO: using TX port A\n\r");
+        }
+        else // 70-3000 MHz: Port B
+        {
+            port = TXB;
+            printf("INFO: using TX port B\n\r");
+        }
+        ad9361_set_tx_rf_port_output(phy, port);
+//        tx_band_select(port);
+
+        ad9361_set_tx_lo_freq(phy, lo_freq_hz);
+        ad9361_get_tx_lo_freq(phy, &lo_freq_hz);
+
+        *error = CMD_OK;
+        memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
+
+        printf("tx_lo_freq=%llu Hz\n\r", lo_freq_hz);
     }
     else
     {
@@ -935,39 +1176,42 @@ void ADSDR_impl::set_tx_lo_freq(uint64_t *param, char param_no, char* error, uin
     }
 }
 
-// **************************************************************************
-// * @brief Gets current sampling frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current sampling frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_tx_samp_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_samp_freq?" command
 {
-    uint32_t sampling_freq_hz = 0;
-    //ad9361_get_tx_sampling_freq(ad9361_phy, &sampling_freq_hz);
+    uint32_t sampling_freq_hz;
+
+    ad9361_get_tx_sampling_freq(phy, &sampling_freq_hz);
 
     *error = CMD_OK;
     memcpy(response, &sampling_freq_hz, sizeof(sampling_freq_hz));
-    printf("tx_samp_freq=%u Hz\n\r", sampling_freq_hz);
+
+    printf("tx_samp_freq=%lu Hz\n\r", sampling_freq_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the sampling frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the sampling frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_tx_samp_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_samp_freq=" command
 {
-    uint32_t sampling_freq_hz = 0;
+    uint32_t sampling_freq_hz;
 
     if(param_no >= 1)
     {
         memcpy(&sampling_freq_hz, param, sizeof(sampling_freq_hz));
-        //ad9361_set_tx_sampling_freq(ad9361_phy, sampling_freq_hz);
-        //ad9361_get_tx_sampling_freq(ad9361_phy, &sampling_freq_hz);
+        ad9361_set_tx_sampling_freq(phy, sampling_freq_hz);
+        ad9361_get_tx_sampling_freq(phy, &sampling_freq_hz);
 
         *error = CMD_OK;
         memcpy(response, &sampling_freq_hz, sizeof(sampling_freq_hz));
-        printf("tx_samp_freq=%u Hz\n\r", sampling_freq_hz);
+
+        printf("tx_samp_freq=%lu Hz\n\r", sampling_freq_hz);
     }
     else
     {
@@ -976,39 +1220,42 @@ void ADSDR_impl::set_tx_samp_freq(uint64_t *param, char param_no, char* error, u
     }
 }
 
-// **************************************************************************
-// * @brief Gets current TX RF bandwidth [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current TX RF bandwidth [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_tx_rf_bandwidth(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_rf_bandwidth?" command
 {
-    uint32_t bandwidth_hz = 0;
-    //ad9361_get_tx_rf_bandwidth(ad9361_phy, &bandwidth_hz);
+    uint32_t bandwidth_hz;
+
+    ad9361_get_tx_rf_bandwidth(phy, &bandwidth_hz);
 
     *error = CMD_OK;
     memcpy(response, &bandwidth_hz, sizeof(bandwidth_hz));
-    printf("tx_rf_bandwidth=%u Hz\n\r", bandwidth_hz);
+
+    printf("tx_rf_bandwidth=%lu Hz\n\r", bandwidth_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the TX RF bandwidth [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the TX RF bandwidth [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_tx_rf_bandwidth(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_rf_bandwidth=" command
 {
-    uint32_t bandwidth_hz = 0;
+    uint32_t bandwidth_hz;
 
     if(param_no >= 1)
     {
         memcpy(&bandwidth_hz, param, sizeof(bandwidth_hz));
-        //ad9361_set_tx_rf_bandwidth(ad9361_phy, bandwidth_hz);
-        //ad9361_get_tx_rf_bandwidth(ad9361_phy, &bandwidth_hz);
+        ad9361_set_tx_rf_bandwidth(phy, bandwidth_hz);
+        ad9361_get_tx_rf_bandwidth(phy, &bandwidth_hz);
 
         *error = CMD_OK;
         memcpy(response, &bandwidth_hz, sizeof(bandwidth_hz));
-        printf("tx_rf_bandwidth=%u Hz\n\r", bandwidth_hz);
+
+        printf("tx_rf_bandwidth=%lu Hz\n\r", bandwidth_hz);
     }
     else
     {
@@ -1017,40 +1264,43 @@ void ADSDR_impl::set_tx_rf_bandwidth(uint64_t *param, char param_no, char* error
     }
 }
 
-// **************************************************************************
-// * @brief Gets current TX attenuation [mdB].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current TX attenuation [mdB].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_tx_attenuation(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx1_attenuation?" command
 {
-    uint32_t attenuation_mdb = 0;
-    //ad9361_get_tx_attenuation(ad9361_phy, 0, &attenuation_mdb);
+    uint32_t attenuation_mdb;
+
+    ad9361_get_tx_attenuation(phy, 0, &attenuation_mdb);
 
     *error = CMD_OK;
     memcpy(response, &attenuation_mdb, sizeof(attenuation_mdb));
-    printf("tx_attenuation=%u mdB\n\r", attenuation_mdb);
+
+    printf("tx_attenuation=%lu mdB\n\r", attenuation_mdb);
 }
 
-// **************************************************************************
-// * @brief Sets the TX attenuation [mdB].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the TX attenuation [mdB].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_tx_attenuation(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx1_attenuation=" command
 {
-    uint32_t attenuation_mdb = 0;
+    uint32_t attenuation_mdb;
 
     if(param_no >= 1)
     {
         attenuation_mdb = param[0];
         memcpy(&attenuation_mdb, param, sizeof(attenuation_mdb));
-        //ad9361_set_tx_attenuation(ad9361_phy, 0, attenuation_mdb);
-        //ad9361_get_tx_attenuation(ad9361_phy, 0, &attenuation_mdb);
+        ad9361_set_tx_attenuation(phy, 0, attenuation_mdb);
+        ad9361_get_tx_attenuation(phy, 0, &attenuation_mdb);
 
         *error = CMD_OK;
         memcpy(response, &attenuation_mdb, sizeof(attenuation_mdb));
-        printf("tx_attenuation=%u mdB\n\r", attenuation_mdb);
+
+        printf("tx_attenuation=%lu mdB\n\r", attenuation_mdb);
     }
     else
     {
@@ -1059,40 +1309,42 @@ void ADSDR_impl::set_tx_attenuation(uint64_t *param, char param_no, char* error,
     }
 }
 
-// **************************************************************************
-// * @brief Gets current TX FIR state.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current TX FIR state.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_tx_fir_en(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_fir_en?" command
 {
-    uint8_t en_dis = 0;
+    uint8_t en_dis;
 
-    //ad9361_get_tx_fir_en_dis(ad9361_phy, &en_dis);
+    ad9361_get_tx_fir_en_dis(phy, &en_dis);
 
     *error = CMD_OK;
     memcpy(response, &en_dis, sizeof(en_dis));
+
     printf("tx_fir_en=%d\n\r", en_dis);
 }
 
-// **************************************************************************
-// * @brief Sets the TX FIR state.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the TX FIR state.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_tx_fir_en(uint64_t *param, char param_no, char* error, uint64_t* response) // "tx_fir_en=" command
 {
-    uint8_t en_dis = 0;
+    uint8_t en_dis;
 
     if(param_no >= 1)
     {
         en_dis = param[0];
         memcpy(&en_dis, param, sizeof(en_dis));
-        //ad9361_set_tx_fir_en_dis(ad9361_phy, en_dis);
-        //ad9361_get_tx_fir_en_dis(ad9361_phy, &en_dis);
+        ad9361_set_tx_fir_en_dis(phy, en_dis);
+        ad9361_get_tx_fir_en_dis(phy, &en_dis);
 
         *error = CMD_OK;
         memcpy(response, &en_dis, sizeof(en_dis));
+
         printf("tx_fir_en=%d\n\r", en_dis);
     }
     else
@@ -1102,43 +1354,64 @@ void ADSDR_impl::set_tx_fir_en(uint64_t *param, char param_no, char* error, uint
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX LO frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX LO frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_lo_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_lo_freq?" command
 {
-    uint64_t lo_freq_hz = 0;
-    //ad9361_get_rx_lo_freq(ad9361_phy, &lo_freq_hz);
+    uint64_t lo_freq_hz;
 
-    lo_freq_hz = static_cast<uint64_t>(m_rx_freq);
+    ad9361_get_rx_lo_freq(phy, &lo_freq_hz);
 
     *error = CMD_OK;
     memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-    printf("rx_lo_freq=%lu Hz\n\r", lo_freq_hz);
+
+    printf("rx_lo_freq=%llu Hz\n\r", lo_freq_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the RX LO frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX LO frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_lo_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_lo_freq=" command
 {
-    uint64_t lo_freq_hz = 0;
+    uint64_t lo_freq_hz;
+    uint32_t port = A_BALANCED;
 
     if(param_no >= 1)
     {
         memcpy(&lo_freq_hz, param, sizeof(lo_freq_hz));
-        m_rx_freq = static_cast<double>(lo_freq_hz);
 
-        double tune_freq = m_adsdr->tune(ad9361_device_t::RX, m_rx_freq);
-        lo_freq_hz = static_cast<uint64_t>(tune_freq);
+        // Select appropriate signal port/path
+        if(lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
+        {
+            port = A_BALANCED;
+            printf("INFO: using RX port A\n\r");
+        }
+        else if(lo_freq_hz >= 1600000000ULL) // 1600-3000 MHz: Port B
+        {
+            port = B_BALANCED;
+            printf("INFO: using RX port B\n\r");
+        }
+        else // 70-1800 MHz: Port C
+        {
+            port = C_BALANCED;
+            printf("INFO: using RX port C\n\r");
+        }
+        ad9361_set_rx_rf_port_input(phy, port);
+//        rx_band_select(port);
+
+        // Set LO frequency
+        ad9361_set_rx_lo_freq(phy, lo_freq_hz);
+        ad9361_get_rx_lo_freq(phy, &lo_freq_hz);
 
         *error = CMD_OK;
         memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-        printf("rx_lo_freq=%lu Hz\n\r", lo_freq_hz);
+
+        printf("rx_lo_freq=%llu Hz\n\r", lo_freq_hz);
     }
     else
     {
@@ -1146,38 +1419,43 @@ void ADSDR_impl::set_rx_lo_freq(uint64_t *param, char param_no, char* error, uin
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX sampling frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX sampling frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_samp_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_samp_freq?" command
 {
-    uint32_t sampling_freq_hz = 0;
-    //ad9361_get_rx_sampling_freq(ad9361_phy, &sampling_freq_hz);
+    uint32_t sampling_freq_hz;
+
+    ad9361_get_rx_sampling_freq(phy, &sampling_freq_hz);
 
     *error = CMD_OK;
     memcpy(response, &sampling_freq_hz, sizeof(sampling_freq_hz));
-    printf("rx_samp_freq=%u Hz\n\r", sampling_freq_hz);
+
+    printf("rx_samp_freq=%lu Hz\n\r", sampling_freq_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the RX sampling frequency [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX sampling frequency [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_samp_freq(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_samp_freq=" command
 {
-    uint32_t sampling_freq_hz = 0;
+    uint32_t sampling_freq_hz;
 
     if(param_no >= 1)
     {
         sampling_freq_hz = (uint32_t)param[0];
         memcpy(&sampling_freq_hz, param, sizeof(sampling_freq_hz));
+        ad9361_set_rx_sampling_freq(phy, sampling_freq_hz);
+        ad9361_get_rx_sampling_freq(phy, &sampling_freq_hz);
 
         *error = CMD_OK;
         memcpy(response, &sampling_freq_hz, sizeof(sampling_freq_hz));
-        printf("rx_samp_freq=%u Hz\n\r", sampling_freq_hz);
+
+        printf("rx_samp_freq=%lu Hz\n\r", sampling_freq_hz);
     }
     else
     {
@@ -1186,26 +1464,28 @@ void ADSDR_impl::set_rx_samp_freq(uint64_t *param, char param_no, char* error, u
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX RF bandwidth [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX RF bandwidth [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_rf_bandwidth(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_rf_bandwidth?" command
 {
-    uint32_t bandwidth_hz = static_cast<uint32_t>(m_clock_rate);
-    //ad9361_get_rx_rf_bandwidth(ad9361_phy, &bandwidth_hz);
+    uint32_t bandwidth_hz;
+
+    ad9361_get_rx_rf_bandwidth(phy, &bandwidth_hz);
 
     *error = CMD_OK;
     memcpy(response, &bandwidth_hz, sizeof(bandwidth_hz));
-    printf("rx_rf_bandwidth=%u Hz\n\r", bandwidth_hz);
+
+    printf("rx_rf_bandwidth=%lu Hz\n\r", bandwidth_hz);
 }
 
-// **************************************************************************
-// * @brief Sets the RX RF bandwidth [Hz].
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX RF bandwidth [Hz].
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_rf_bandwidth(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_rf_bandwidth=" command
 {
     uint32_t bandwidth_hz;
@@ -1213,12 +1493,13 @@ void ADSDR_impl::set_rx_rf_bandwidth(uint64_t *param, char param_no, char* error
     if(param_no >= 1)
     {
         memcpy(&bandwidth_hz, param, sizeof(bandwidth_hz));
-        double clock_rate = m_adsdr->set_clock_rate(static_cast<double>(bandwidth_hz));
-        bandwidth_hz = static_cast<uint32_t>(clock_rate);
+        ad9361_set_rx_rf_bandwidth(phy, bandwidth_hz);
+        ad9361_get_rx_rf_bandwidth(phy, &bandwidth_hz);
 
         *error = CMD_OK;
         memcpy(response, &bandwidth_hz, sizeof(bandwidth_hz));
-        printf("rx_rf_bandwidth=%u Hz\n\r", bandwidth_hz);
+
+        printf("rx_rf_bandwidth=%lu Hz\n\r", bandwidth_hz);
     }
     else
     {
@@ -1227,26 +1508,28 @@ void ADSDR_impl::set_rx_rf_bandwidth(uint64_t *param, char param_no, char* error
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX GC mode.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX GC mode.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_gc_mode(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx1_gc_mode?" command
 {
     uint8_t gc_mode;
-    //ad9361_get_rx_gain_control_mode(ad9361_phy, 0, &gc_mode);
+
+    ad9361_get_rx_gain_control_mode(phy, 0, &gc_mode);
 
     *error = CMD_OK;
     memcpy(response, &gc_mode, sizeof(gc_mode));
+
     printf("rx_gc_mode=%d\n\r", gc_mode);
 }
 
-// **************************************************************************
-// * @brief Sets the RX GC mode.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX GC mode.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_gc_mode(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx1_gc_mode=" command
 {
     uint8_t gc_mode;
@@ -1254,6 +1537,9 @@ void ADSDR_impl::set_rx_gc_mode(uint64_t *param, char param_no, char* error, uin
     if(param_no >= 1)
     {
         memcpy(&gc_mode, param, sizeof(gc_mode));
+        ad9361_set_rx_gain_control_mode(phy, 0, gc_mode);
+        ad9361_get_rx_gain_control_mode(phy, 0, &gc_mode);
+
         *error = CMD_OK;
         memcpy(response, &gc_mode, sizeof(gc_mode));
 
@@ -1266,37 +1552,42 @@ void ADSDR_impl::set_rx_gc_mode(uint64_t *param, char param_no, char* error, uin
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX RF gain.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX RF gain.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_rf_gain(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx1_rf_gain?" command
 {
-    int32_t gain_db = 0;
+    int32_t gain_db;
+
+    ad9361_get_rx_rf_gain(phy, 0, &gain_db);
 
     *error = CMD_OK;
     memcpy(response, &gain_db, sizeof(gain_db));
-    printf("rx_rf_gain=%d dB\n\r", gain_db);
+
+    printf("rx_rf_gain=%ld dB\n\r", gain_db);
 }
 
-// **************************************************************************
-// * @brief Sets the RX RF gain. [dB]
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX RF gain. [dB]
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_rf_gain(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx1_rf_gain=" command
 {
-    int32_t gain_db = 0;
+    int32_t gain_db;
 
     if(param_no >= 1)
     {
         memcpy(&gain_db, param, sizeof(gain_db));
+        ad9361_set_rx_rf_gain(phy, 0, gain_db);
+        ad9361_get_rx_rf_gain(phy, 0, &gain_db);
 
         *error = CMD_OK;
         memcpy(response, &gain_db, sizeof(gain_db));
 
-        printf("rx_rf_gain=%d dB\n\r", gain_db);
+        printf("rx_rf_gain=%ld dB\n\r", gain_db);
     }
     else
     {
@@ -1305,25 +1596,28 @@ void ADSDR_impl::set_rx_rf_gain(uint64_t *param, char param_no, char* error, uin
     }
 }
 
-// **************************************************************************
-// * @brief Gets current RX FIR state.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Gets current RX FIR state.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::get_rx_fir_en(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_fir_en?" command
 {
-    uint8_t en_dis = 0;
+    uint8_t en_dis;
+
+    ad9361_get_rx_fir_en_dis(phy, &en_dis);
 
     *error = CMD_OK;
     memcpy(response, &en_dis, sizeof(en_dis));
+
     printf("rx_fir_en=%d\n\r", en_dis);
 }
 
-// **************************************************************************
-// * @brief Sets the RX FIR state.
-// *
-// * @return None.
-// **************************************************************************
+/**************************************************************************//***
+ * @brief Sets the RX FIR state.
+ *
+ * @return None.
+*******************************************************************************/
 void ADSDR_impl::set_rx_fir_en(uint64_t *param, char param_no, char* error, uint64_t* response) // "rx_fir_en=" command
 {
     uint8_t en_dis;
@@ -1331,8 +1625,12 @@ void ADSDR_impl::set_rx_fir_en(uint64_t *param, char param_no, char* error, uint
     if(param_no >= 1)
     {
         memcpy(&en_dis, param, sizeof(en_dis));
+        ad9361_set_rx_fir_en_dis(phy, en_dis);
+        ad9361_get_rx_fir_en_dis(phy, &en_dis);
+
         *error = CMD_OK;
         memcpy(response, &en_dis, sizeof(en_dis));
+
         printf("rx_fir_en=%d\n\r", en_dis);
     }
     else
@@ -1344,7 +1642,8 @@ void ADSDR_impl::set_rx_fir_en(uint64_t *param, char param_no, char* error, uint
 
 void ADSDR_impl::set_datapath_en(uint64_t *param, char param_no, char* error, uint64_t* response)
 {
-    uint8_t en_dis = 0;
+    uint8_t en_dis;
+    int ret = 0;
 
     if(param_no >= 1)
     {
@@ -1355,10 +1654,18 @@ void ADSDR_impl::set_datapath_en(uint64_t *param, char param_no, char* error, ui
         if(en_dis == 1)
         {
             // Enable FDD
+            ret = ad9361_set_en_state_machine_mode(phy, ENSM_MODE_FDD);
+            print_ensm_state(phy);
         }
         else
         {
-            // Disable
+            ret = ad9361_set_en_state_machine_mode(phy, ENSM_MODE_WAIT);
+            print_ensm_state(phy);
+        }
+
+        if(ret != 0)
+        {
+            *error = CMD_ENSM_ERR;
         }
 
         printf("datapath_en=%d\n\r", en_dis);
@@ -1373,9 +1680,9 @@ void ADSDR_impl::set_datapath_en(uint64_t *param, char param_no, char* error, ui
 void ADSDR_impl::get_version(uint64_t *param, char param_no, char* error, uint64_t* response)
 {
     uint8_t version[8] = {
-            0,//FREESRP_FPGA_VERSION_MAJOR,
-            0,//FREESRP_FPGA_VERSION_MINOR,
-            1,//FREESRP_FPGA_VERSION_PATCH,
+            0,
+            3,
+            0,
             0,
             0,
             0,
@@ -1389,7 +1696,8 @@ void ADSDR_impl::get_version(uint64_t *param, char param_no, char* error, uint64
 
 void ADSDR_impl::set_loopback_en(uint64_t* param, char param_no, char* error, uint64_t* response)
 {
-    uint8_t en_dis = 0;
+    uint8_t en_dis;
+    int ret = -1;
 
     if(param_no >= 1)
     {
@@ -1400,19 +1708,60 @@ void ADSDR_impl::set_loopback_en(uint64_t* param, char param_no, char* error, ui
         if(en_dis == 1)
         {
             // Enable loopback
-            m_adsdr->data_port_loopback(true);
+            ret = ad9361_bist_loopback(phy, 1);
         }
         else
         {
             // Disable
-            m_adsdr->data_port_loopback(false);
+            ret = ad9361_bist_loopback(phy, 0);
         }
+
+        if(ret != 0)
+        {
+            *error = CMD_ENSM_ERR;
+        }
+
         printf("loopback_en=%d\n\r", en_dis);
     }
     else
     {
         *error = CMD_INVALID_PARAM;
         printf("ERROR: set_loopback_en: invalid parameter!\n\r");
+    }
+}
+
+void ADSDR_impl::print_ensm_state(struct ad9361_rf_phy *phy)
+{
+    static uint32_t mode;
+
+    ad9361_get_en_state_machine_mode(phy, &mode);
+
+    switch(mode)
+    {
+        case ENSM_MODE_TX:
+            printf("INFO: AD9364 in TX mode\n\r");
+            break;
+        case ENSM_MODE_RX:
+            printf("INFO: AD9364 in RX mode\n\r");
+            break;
+        case ENSM_MODE_ALERT:
+            printf("INFO: AD9364 in ALERT mode\n\r");
+            break;
+        case ENSM_MODE_FDD:
+            printf("INFO: AD9364 in FDD mode\n\r");
+            break;
+        case ENSM_MODE_WAIT:
+            printf("INFO: AD9364 in WAIT mode\n\r");
+            break;
+        case ENSM_MODE_SLEEP:
+            printf("INFO: AD9364 in SLEEP mode\n\r");
+            break;
+        case ENSM_MODE_PINCTRL:
+            printf("INFO: AD9364 in PINCTRL mode\n\r");
+            break;
+        case ENSM_MODE_PINCTRL_FDD_INDEP:
+            printf("INFO: AD9364 in PINCTRL_FDD_INDEP mode\n\r");
+            break;
     }
 }
 
