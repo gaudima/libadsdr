@@ -40,6 +40,7 @@
 
 //#define ADSDR_TX_OUT 0x02
 #define ADSDR_RX_IN 0x81
+#define ADSDR_DEBUG_IN 0x82
 
 #define ADSDR_USB_CTRL_SIZE 64
 #define ADSDR_UART_BUF_SIZE 16
@@ -293,13 +294,11 @@ namespace ADSDR
     namespace Util
     {
         //! This will look for an FX3 in bootloader mode.
-	/*!
-         * \param upload_firmware: If 'false', this function will return 'true' if an unprogrammed FX3 is found.
-         *                          If 'true', it will attempt to program the FX3 with the specified firmware.
-         * \param filename: Path to the image file to program the FX3 with.
-         */
-        bool find_fx3(bool upload_firmware=false, std::string filename="");
+        int32_t find_fx3();
 
+        void reset_fx3();
+
+        void flash_fx3(std::string filename);
         //
         int get_device_count();
     };

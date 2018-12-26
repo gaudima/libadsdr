@@ -21,7 +21,7 @@
 #define __LIBADSDR_ADSDR_IMPL_HPP__
 
 
-#include <adsdr.hpp>
+#include "adsdr.hpp"
 #include "readerwriterqueue/readerwriterqueue.h"
 #include "libusb.h"
 
@@ -53,6 +53,7 @@ namespace ADSDR
         void tx(std::shared_ptr<rx_tx_buf> buf);
 #endif
 
+        void set_rx_callback(std::function<void(const std::vector<sample> &)> rx_callback);
         void start_rx(std::function<void(const std::vector<sample> &)> rx_callback = {});
         void stop_rx();
 
@@ -70,10 +71,6 @@ namespace ADSDR
         adsdr_version version();
 
     protected:
-        int txControlToDevice(uint8_t* src, uint32_t size8, uint8_t cmd, uint16_t wValue, uint16_t wIndex);
-        int txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd, uint16_t wValue, uint16_t wIndex);
-
-
         int deviceStart();
         int deviceStop();
         int deviceReset();
@@ -134,15 +131,23 @@ namespace ADSDR
         void set_loopback_en(uint64_t* param, char param_no, char* error, uint64_t* response);
 
     private:
+        void start_intr();
+        void stop_intr();
         void run_rx_tx();
+
+        int ad_set_en_dis(bool enabled);
 
         void print_ensm_state(struct ad9361_rf_phy *phy);
 
+        bool values_nearly_equal(double v1, double v2);
+
         libusb_transfer *create_rx_transfer(libusb_transfer_cb_fn callback);
         libusb_transfer *create_tx_transfer(libusb_transfer_cb_fn callback);
+        libusb_transfer *create_intr_transfer(libusb_transfer_cb_fn callback);
 
         static void rx_callback(libusb_transfer *transfer);
         static void tx_callback(libusb_transfer *transfer);
+        static void intr_callback(libusb_transfer *transfer);
 
         static int fill_tx_transfer(libusb_transfer *transfer);
 
@@ -158,6 +163,7 @@ namespace ADSDR
 
         std::array<libusb_transfer *, ADSDR_RX_TX_TRANSFER_QUEUE_SIZE> _rx_transfers;
         std::array<libusb_transfer *, ADSDR_RX_TX_TRANSFER_QUEUE_SIZE> _tx_transfers;
+        std::array<libusb_transfer *, ADSDR_RX_TX_TRANSFER_QUEUE_SIZE> _intr_transfers;
 
         static std::function<void(const std::vector<sample> &)> _rx_custom_callback;
         static std::function<void(std::vector<sample> &)> _tx_custom_callback;
@@ -174,6 +180,20 @@ namespace ADSDR
         ad9361_rf_phy *phy;
 
         std::vector<cmd_function> m_cmd_list;
+
+        uint64_t tx_lo_freq;
+        uint64_t tx_samp_freq;
+        uint64_t tx_rf_bandwidth;
+        uint64_t tx_attenuation;
+        uint64_t tx_fir_en;
+        uint64_t rx_lo_freq;
+        uint64_t rx_samp_freq;
+        uint64_t rx_rf_bandwidth;
+        uint64_t rx_gc_mode;
+        uint64_t rx_rf_gain;
+        uint64_t rx_fir_en;
+        uint64_t datapath_en;
+        uint64_t loopback_en;
     };
 }
 

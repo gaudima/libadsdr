@@ -12,7 +12,8 @@ typedef enum {
     DEVICE_STOP                        = 0xBB,
     DEVICE_RESET                       = 0xB3,
     REG_SPI_WRITE_READ_MULTIPLE_STAGE1 = 0xC0,
-    REG_SPI_WRITE_READ_MULTIPLE_STAGE2 = 0xC1
+    REG_SPI_WRITE_READ_MULTIPLE_STAGE2 = 0xC1,
+    DEVICE_GPIO_AD_ENABLE_DISABLE      = 0xC2
 } fx3cmd;
 
 #endif //LIBADSDR_FX3CMD_H

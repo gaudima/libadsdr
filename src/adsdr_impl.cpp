@@ -22,8 +22,10 @@
 
 #include <fstream>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
 #include "adsdr_impl.h"
-
+#include <linux/errno.h>
 
 #define ADSDR_SERIAL_DSCR_INDEX 3
 #define MAX_SERIAL_LENGTH 256
@@ -37,6 +39,15 @@ std::vector<sample> ADSDR_impl::_rx_decoder_buf(ADSDR_RX_TX_BUF_SIZE / ADSDR_BYT
 std::function<void(const std::vector<sample> &)> ADSDR_impl::_rx_custom_callback;
 std::vector<sample> ADSDR_impl::_tx_encoder_buf(ADSDR_RX_TX_BUF_SIZE / ADSDR_BYTES_PER_SAMPLE);
 std::function<void(std::vector<sample> &)> ADSDR_impl::_tx_custom_callback;
+
+std::string buf_to_str(unsigned char *buff, int len) {
+    std::stringstream ret;
+    ret << std::hex;
+    for(int i = 0; i < len; i++) {
+        ret << std::setw(2) << std::setfill('0') << (int32_t)buff[i] << " ";
+    }
+    return ret.str();
+}
 
 ADSDR_impl::ADSDR_impl(std::string serial_number)
 {
@@ -466,6 +477,11 @@ ADSDR_impl::ADSDR_impl(std::string serial_number)
         _rx_transfers[i] = create_rx_transfer(&ADSDR_impl::rx_callback);
     }
 
+    for(size_t i = 0; i < _intr_transfers.size(); i++)
+    {
+        _intr_transfers[i] = create_intr_transfer(&ADSDR_impl::intr_callback);
+    }
+
 #if 0
     for(int size_t = 0; i < _tx_transfers.size(); i++)
     {
@@ -530,8 +546,8 @@ bool ADSDR_impl::init_sdr()
     ad9361_set_tx_fir_config(phy, tx_fir_config);
     ad9361_set_no_ch_mode(phy, 1);
     print_ensm_state(phy);
-//    ad9361_set_en_state_machine_mode(phy, ENSM_MODE_WAIT);
-//    print_ensm_state(phy);
+    ad9361_set_en_state_machine_mode(phy, ENSM_MODE_WAIT);
+    print_ensm_state(phy);
     return true;
 }
 
@@ -632,6 +648,13 @@ libusb_transfer* ADSDR_impl::create_rx_transfer(libusb_transfer_cb_fn callback)
     return transfer;
 }
 
+libusb_transfer* ADSDR_impl::create_intr_transfer(libusb_transfer_cb_fn callback){
+    libusb_transfer *transfer = libusb_alloc_transfer(0);
+    unsigned char *buf = new unsigned char[256];
+    libusb_fill_interrupt_transfer(transfer, _adsdr_handle, ADSDR_DEBUG_IN, buf, 128, callback, nullptr, ADSDR_USB_TIMEOUT);
+    return transfer;
+}
+
 libusb_transfer* ADSDR_impl::create_tx_transfer(libusb_transfer_cb_fn callback)
 {
     callback = callback; // warning
@@ -653,6 +676,12 @@ void ADSDR_impl::rx_callback(libusb_transfer *transfer)
         // Transfer succeeded
 
         // Decode samples from transfer buffer into _rx_decoder_buf
+//        printf("rx.buf.len: %d\n", transfer->actual_length);
+//        for(int i = 0; i < transfer->actual_length; i++) {
+//            printf("%02X ", transfer->buffer[i]);
+//        }
+//        printf("\n");
+
         decode_rx_transfer(transfer->buffer, transfer->actual_length, _rx_decoder_buf);
 
         if(_rx_custom_callback)
@@ -672,6 +701,42 @@ void ADSDR_impl::rx_callback(libusb_transfer *transfer)
                 }
             }
         }
+    }
+    else
+    {
+        // TODO: Handle error
+
+    }
+
+    // Resubmit the transfer
+    if(transfer->status != LIBUSB_TRANSFER_CANCELLED)
+    {
+        int ret = libusb_submit_transfer(transfer);
+
+        if(ret < 0)
+        {
+            // TODO: Handle error
+        }
+    }
+}
+
+void ADSDR_impl::intr_callback(libusb_transfer *transfer)
+{
+    if(transfer->status == LIBUSB_TRANSFER_COMPLETED)
+    {
+        // Transfer succeeded
+
+        // Decode samples from transfer buffer into _rx_decoder_buf
+        uint8_t priority = transfer->buffer[0];
+        uint8_t threadId = transfer->buffer[1];
+        uint16_t msg = (transfer->buffer[2] << 8) |
+                       (transfer->buffer[3] << 0);
+        uint32_t param = (transfer->buffer[4] << 24) |
+                         (transfer->buffer[5] << 16) |
+                         (transfer->buffer[6] << 8) |
+                         (transfer->buffer[7] << 0);
+
+        printf("[p=%d th=%d msg=%04X par=%08X]: %s\n\n", priority, threadId, msg, param, transfer->buffer + 8);
     }
     else
     {
@@ -724,13 +789,39 @@ void ADSDR_impl::tx_callback(libusb_transfer* transfer)
     }
 }
 
+void ADSDR_impl::start_intr()
+{
+    for(libusb_transfer *transfer: _intr_transfers)
+    {
+        int ret = libusb_submit_transfer(transfer);
+
+        if(ret < 0)
+        {
+            throw ConnectionError("Could not submit INTR transfer. libusb error: " + std::to_string(ret));
+        }
+    }
+}
+
+void ADSDR_impl::stop_intr()
+{
+    for(libusb_transfer *transfer: _intr_transfers)
+    {
+        int ret = libusb_cancel_transfer(transfer);
+        if(ret == LIBUSB_ERROR_NOT_FOUND || ret == 0)
+        {
+            // Transfer cancelled
+        }
+        else
+        {
+            // Error
+            throw ConnectionError("Could not cancel INTR transfer. libusb error: " + std::to_string(ret));
+        }
+    }
+}
+
 void ADSDR_impl::start_rx(std::function<void(const std::vector<sample> &)> rx_callback)
 {
     _rx_custom_callback = rx_callback;
-
-    deviceStop();
-
-    //deviceReset();
 
     for(libusb_transfer *transfer: _rx_transfers)
     {
@@ -741,6 +832,8 @@ void ADSDR_impl::start_rx(std::function<void(const std::vector<sample> &)> rx_ca
             throw ConnectionError("Could not submit RX transfer. libusb error: " + std::to_string(ret));
         }
     }
+
+    start_intr();
 
     deviceStart();
 }
@@ -760,6 +853,8 @@ void ADSDR_impl::stop_rx()
             throw ConnectionError("Could not cancel RX transfer. libusb error: " + std::to_string(ret));
         }
     }
+
+    stop_intr();
 }
 
 void ADSDR_impl::start_tx(std::function<void(std::vector<sample> &)> tx_callback)
@@ -879,8 +974,7 @@ void ADSDR_impl::decode_rx_transfer(unsigned char *buffer, int actual_length, st
 
 void ADSDR_impl::run_rx_tx()
 {
-    while(_run_rx_tx.load())
-    {
+    while(_run_rx_tx.load()) {
         libusb_handle_events(_ctx);
     }
 }
@@ -995,7 +1089,7 @@ command ADSDR_impl::make_command(command_id id, double param) const
 }
 
 response ADSDR_impl::send_cmd(command cmd)
-{    
+{
     response reply;
 
     std::cout << " Send cmd: " << cmd.cmd << " param: " << cmd.param << std::endl;
@@ -1042,61 +1136,7 @@ int ADSDR_impl::deviceReset()
     return txControlToDevice(buf, 3, DEVICE_RESET, 0, 0);
 }
 
-int ADSDR_impl::txControlToDevice(uint8_t* src, uint32_t size8, uint8_t cmd, uint16_t wValue, uint16_t wIndex)
-{
-    if(_adsdr_handle != 0)
-    {
-        /* From libusb-1.0 documentation:
-         * Bits 0:4 determine recipient, see libusb_request_recipient.
-         * Bits 5:6 determine type, see libusb_request_type.
-         * Bit 7 determines data transfer direction, see libusb_endpoint_direction. */
-        uint8_t bmRequestType = LIBUSB_RECIPIENT_DEVICE | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT;
 
-        /* From libusb-1.0 documentation:
-         * If the type bits of bmRequestType are equal to LIBUSB_REQUEST_TYPE_STANDARD
-         * then this field refers to libusb_standard_request.
-         * For other cases, use of this field is application-specific. */
-        uint8_t bRequest = cmd;
-
-        /* From libusb-1.0 documentation:
-         * timeout (in millseconds) that this function should wait before giving up
-         * due to no response being received.
-         * For an unlimited timeout, use value 0. */
-        uint32_t timeout_ms = DEV_UPLOAD_TIMEOUT_MS;
-
-        int res = libusb_control_transfer(_adsdr_handle, bmRequestType, bRequest, wValue, wIndex, src, size8, timeout_ms );
-        if ( res != ( int ) size8 ) {
-            fprintf( stderr, "FX3Dev::txControlToDevice() error %d %s\n", res, libusb_error_name(res) );
-            return FX3_ERR_CTRL_TX_FAIL;
-        }
-        return FX3_ERR_OK;
-    }
-
-    return FX3_ERR_NO_DEVICE_FOUND;
-}
-
-int ADSDR_impl::txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd, uint16_t wValue, uint16_t wIndex)
-{
-    if(_adsdr_handle != 0)
-    {
-        /* From libusb-1.0 documentation:
-         * Bits 0:4 determine recipient, see libusb_request_recipient.
-         * Bits 5:6 determine type, see libusb_request_type.
-         * Bit 7 determines data transfer direction, see libusb_endpoint_direction. */
-        uint8_t bmRequestType = LIBUSB_RECIPIENT_DEVICE | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN;
-        uint8_t bRequest = cmd;
-        uint32_t timeout_ms = DEV_UPLOAD_TIMEOUT_MS;
-
-        int res = libusb_control_transfer(_adsdr_handle, bmRequestType, bRequest, wValue, wIndex, dest, size8, timeout_ms );
-        if ( res != ( int ) size8 ) {
-            fprintf( stderr, "FX3Dev::transferDataFromDevice() error %d %s\n", res, libusb_error_name(res) );
-            return FX3_ERR_CTRL_TX_FAIL;
-        }
-        return FX3_ERR_OK;
-    }
-
-    return FX3_ERR_NO_DEVICE_FOUND;
-}
 
 //=====================================  Commands  ======================================================
 
@@ -1129,7 +1169,7 @@ void ADSDR_impl::get_tx_lo_freq(uint64_t *param, char param_no, char* error, uin
 
     *error = CMD_OK;
     memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-
+    tx_lo_freq = lo_freq_hz;
     printf("tx_lo_freq=%llu Hz\n\r", lo_freq_hz);
 }
 
@@ -1147,26 +1187,27 @@ void ADSDR_impl::set_tx_lo_freq(uint64_t *param, char param_no, char* error, uin
     {
         memcpy(&lo_freq_hz, param, sizeof(lo_freq_hz));
 
-        // Select appropriate signal port/path
-        if(lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
-        {
-            port = TXA;
-            printf("INFO: using TX port A\n\r");
-        }
-        else // 70-3000 MHz: Port B
-        {
-            port = TXB;
-            printf("INFO: using TX port B\n\r");
-        }
-        ad9361_set_tx_rf_port_output(phy, port);
-//        tx_band_select(port);
+        if(!values_nearly_equal(tx_lo_freq, lo_freq_hz)) {
+            // Select appropriate signal port/path
+            if (lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
+            {
+                port = TXA;
+                printf("INFO: using TX port A\n\r");
+            } else // 70-3000 MHz: Port B
+            {
+                port = TXB;
+                printf("INFO: using TX port B\n\r");
+            }
+            ad9361_set_tx_rf_port_output(phy, port);
+//          tx_band_select(port);
 
-        ad9361_set_tx_lo_freq(phy, lo_freq_hz);
-        ad9361_get_tx_lo_freq(phy, &lo_freq_hz);
+            ad9361_set_tx_lo_freq(phy, lo_freq_hz);
+            ad9361_get_tx_lo_freq(phy, &lo_freq_hz);
+        }
 
         *error = CMD_OK;
         memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-
+        tx_lo_freq = lo_freq_hz;
         printf("tx_lo_freq=%llu Hz\n\r", lo_freq_hz);
     }
     else
@@ -1367,7 +1408,7 @@ void ADSDR_impl::get_rx_lo_freq(uint64_t *param, char param_no, char* error, uin
 
     *error = CMD_OK;
     memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-
+    rx_lo_freq = lo_freq_hz;
     printf("rx_lo_freq=%llu Hz\n\r", lo_freq_hz);
 }
 
@@ -1381,42 +1422,48 @@ void ADSDR_impl::set_rx_lo_freq(uint64_t *param, char param_no, char* error, uin
     uint64_t lo_freq_hz;
     uint32_t port = A_BALANCED;
 
+//    ad_set_en_dis(false);
+
     if(param_no >= 1)
     {
         memcpy(&lo_freq_hz, param, sizeof(lo_freq_hz));
-
-        // Select appropriate signal port/path
-        if(lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
-        {
-            port = A_BALANCED;
-            printf("INFO: using RX port A\n\r");
-        }
-        else if(lo_freq_hz >= 1600000000ULL) // 1600-3000 MHz: Port B
-        {
-            port = B_BALANCED;
-            printf("INFO: using RX port B\n\r");
-        }
-        else // 70-1800 MHz: Port C
-        {
-            port = C_BALANCED;
-            printf("INFO: using RX port C\n\r");
-        }
-        ad9361_set_rx_rf_port_input(phy, port);
+//        if(!values_nearly_equal(rx_lo_freq, lo_freq_hz)) {
+            // Select appropriate signal port/path
+            if (lo_freq_hz >= 3000000000ULL) // 3000-6000 MHz: Port A
+            {
+                port = A_BALANCED;
+                printf("INFO: using RX port A\n\r");
+            } else if (lo_freq_hz >= 1600000000ULL) // 1600-3000 MHz: Port B
+            {
+                port = B_BALANCED;
+                printf("INFO: using RX port B\n\r");
+            } else // 70-1800 MHz: Port C
+            {
+                port = C_BALANCED;
+                printf("INFO: using RX port C\n\r");
+            }
+            ad9361_set_rx_rf_port_input(phy, port);
 //        rx_band_select(port);
 
-        // Set LO frequency
-        ad9361_set_rx_lo_freq(phy, lo_freq_hz);
-        ad9361_get_rx_lo_freq(phy, &lo_freq_hz);
+            // Set LO frequency
+            ad9361_set_rx_lo_freq(phy, lo_freq_hz);
+            ad9361_get_rx_lo_freq(phy, &lo_freq_hz);
 
-        *error = CMD_OK;
-        memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
-
-        printf("rx_lo_freq=%llu Hz\n\r", lo_freq_hz);
+            *error = CMD_OK;
+            memcpy(response, &lo_freq_hz, sizeof(lo_freq_hz));
+            rx_lo_freq = lo_freq_hz;
+            printf("rx_lo_freq=%llu Hz\n\r", lo_freq_hz);
+//        }
     }
     else
     {
         printf("ERROR: set_rx_lo_freq: invalid parameter!\n\r");
     }
+//    ad_set_en_dis(true);
+}
+
+bool ADSDR_impl::values_nearly_equal(double v1, double v2) {
+    return max(v1, v2) - min(v1, v2) < 1;
 }
 
 /**************************************************************************//***
@@ -1763,5 +1810,11 @@ void ADSDR_impl::print_ensm_state(struct ad9361_rf_phy *phy)
             printf("INFO: AD9364 in PINCTRL_FDD_INDEP mode\n\r");
             break;
     }
+}
+
+int ADSDR_impl::ad_set_en_dis(bool enabled) {
+    printf("ENABLE %d\n", enabled);
+    uint8_t tmp;
+    return txControlFromDevice(&tmp, 1, 0xC2, enabled, 1);
 }
 

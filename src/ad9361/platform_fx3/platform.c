@@ -64,10 +64,28 @@ int32_t spi_init(uint32_t device_id,
 	return 0;
 }
 
+void print_buf(const char *msg, unsigned char *buff, int len) {
+	printf("%s: ", msg);
+	for(int i = 0; i < len; i++) {
+		printf("%X ", buff[i]);
+	}
+	printf("\n");
+}
+//
+//char* buf_to_str(unsigned char *buff, int len) {
+//    char* ret = malloc(sizeof(char) * 2048);
+//    ret[0] = '\0';
+//    for(int i = 0; i < len; i++) {
+//        snprintf(ret + strlen(ret), 2048 - strlen(ret), "%02X ", buff[i]);
+//    }
+//    return ret;
+//}
+
 int txControlToDevice(uint8_t* src, uint32_t size8, uint8_t cmd, uint16_t wValue, uint16_t wIndex)
 {
 	if(_adsdr_handle != 0)
 	{
+//		printf("txControlToDevice\n");
 		uint8_t bmRequestType = LIBUSB_RECIPIENT_DEVICE | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT;
 		uint8_t bRequest = cmd;
 		uint32_t timeout_ms = DEV_UPLOAD_TIMEOUT_MS;
@@ -87,11 +105,13 @@ int txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd, uint16_t wV
 {
 	if(_adsdr_handle != 0)
 	{
+//		printf("txControlFromDevice\n");
 		uint8_t bmRequestType = LIBUSB_RECIPIENT_DEVICE | LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN;
 		uint8_t bRequest = cmd;
 		uint32_t timeout_ms = DEV_UPLOAD_TIMEOUT_MS;
 
 		int res = libusb_control_transfer(_adsdr_handle, bmRequestType, bRequest, wValue, wIndex, dest, size8, timeout_ms );
+//		print_buf("dst", dest, size8);
 		if ( res != ( int ) size8 ) {
 			fprintf( stderr, "FX3Dev::transferDataFromDevice() error %d %s\n", res, libusb_error_name(res) );
 			return FX3_ERR_CTRL_TX_FAIL;
@@ -102,43 +122,66 @@ int txControlFromDevice(uint8_t* dest, uint32_t size8 , uint8_t cmd, uint16_t wV
 	return FX3_ERR_NO_DEVICE_FOUND;
 }
 
-uint8_t * reverse_buf(uint8_t *buff, int len) {
-    unsigned char tmp = 0;
-    for(int i = 0; i < len / 2; i++) {
-        tmp = buff[i];
-        buff[i] = buff[len - i - 1];
-        buff[len - i - 1] = tmp;
-    }
-	return buff;
-}
-
-void print_buf(const char *msg, unsigned char *buff, int len) {
-    printf("%s: ", msg);
-    for(int i = 0; i < len; i++) {
-        printf("%X ", buff[i]);
-    }
-    printf("\n");
-}
-
-int align_buff(uint8_t *src, int len) {
-	int aligned_len = ((len - 1) / 2 + 1) * 2;
-	memset(src + len, 0, sizeof(uint8_t) * (aligned_len - len));
-	return aligned_len;
-}
+//int fx3_spi_write(uint16_t addr, uint8_t val) {
+//    uint8_t buffer[3];
+//    addr |= 0x8000;
+//    buffer[0] = (uint8_t)(addr >> 8);
+//    buffer[1] = (uint8_t)(addr & 0xFF);
+//    buffer[2] = val;
+//    return txControlToDevice(buffer, 3, REG_SPI_WRITE8, 0, 0);
+//}
+//
+//int fx3_spi_read(uint16_t addr, uint8_t *val) {
+//    uint8_t buffer[3];
+//    buffer[0] = (uint8_t)(addr >> 8);
+//    buffer[1] = (uint8_t)(addr & 0xFF);
+//    buffer[2] = *val;
+//    printf("r1 %x %x %x\n", buffer[0], buffer[1], buffer[2]);
+//    int ret = txControlFromDevice(buffer, 3, REG_SPI_READ8, *val, addr);
+//    *val = buffer[2];
+//    printf("r2 %x %x %x\n", buffer[0], buffer[1], buffer[2]);
+//    return ret;
+//}
 
 /***************************************************************************//**
  * @brief spi_write_then_read
 *******************************************************************************/
+//int spi_write_then_read(struct spi_device *spi,
+//							const unsigned char *txbuf, unsigned n_tx,
+//							unsigned char *rxbuf, unsigned n_rx)
+//{
+//	uint16_t cmd = (txbuf[0] << 8) | txbuf[1];
+//    printf("%x\n", cmd);
+//	bool write = (cmd >> 15 == 1);
+//	uint16_t cnt = ((cmd >> 12) & 0x7) + 1;
+//	uint16_t addr = cmd & 0x3FF;
+//    int ret = 0;
+//	for(int i = 0; i < cnt; i++) {
+//        if (write) {
+//            ret = fx3_spi_write(addr, txbuf[2 + i]);
+//        } else {
+//            ret = fx3_spi_read(addr, &rxbuf[i]);
+//        }
+//        if(ret != 0) {
+//            break;
+//        }
+//        addr--;
+//    }
+//	return ret;
+//}
+
 int spi_write_then_read(struct spi_device *spi,
 							const unsigned char *txbuf, unsigned n_tx,
 							unsigned char *rxbuf, unsigned n_rx)
 {
 	uint8_t buff[32];
+	memset(buff, 0, 32);
     memcpy(buff, txbuf, n_tx);
-    memset(buff + n_tx, 0, n_rx);
-	int ret = txControlToDevice(buff, n_tx + n_rx, REG_SPI_WRITE_READ_MULTIPLE_STAGE1, 0, 0);
+//    print_buf("send: ", buff, n_tx + n_rx);
+	int ret = txControlToDevice(buff, 32, REG_SPI_WRITE_READ_MULTIPLE_STAGE1, n_tx + n_rx, 0);
 	if(ret < 0) return ret;
-	ret = txControlFromDevice(buff, n_tx + n_rx, REG_SPI_WRITE_READ_MULTIPLE_STAGE2, 0, 0);
+	ret = txControlFromDevice(buff, 32, REG_SPI_WRITE_READ_MULTIPLE_STAGE2, n_tx + n_rx, 0);
+//    print_buf("recv: ", buff, n_tx + n_rx);
 	if(ret < 0) return ret;
 	memcpy(rxbuf, buff + n_tx, n_rx);
 	return 0;
@@ -165,7 +208,7 @@ void gpio_direction(uint8_t pin, uint8_t direction)
 *******************************************************************************/
 bool gpio_is_valid(int number)
 {
-	return number == GPIO_RESET_PIN;
+	return (number == GPIO_RESET_PIN);
 }
 
 /***************************************************************************//**

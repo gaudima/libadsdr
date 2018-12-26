@@ -19,7 +19,6 @@
 
 #include <adsdr.hpp>
 #include "adsdr_impl.h"
-
 namespace ADSDR {
 
     ADSDR::ADSDR::ADSDR(std::string serial_number)
